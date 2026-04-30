@@ -89,6 +89,59 @@ $env:OLLAMA_MODEL="qwen2.5:7b"
 python .\agent.py
 ```
 
+## Taiwan Tutor Model Setup
+
+For Chinese learning, especially Traditional Chinese with Taiwan context, the default `qwen2.5:3b` is too weak.
+
+Recommended order for this laptop:
+
+1. `Llama-3-Taiwan-8B-Instruct` GGUF `Q4_K_M`
+2. `Llama-3-Taiwan-8B-Instruct` GGUF `Q5_K_M`
+3. `Breeze-7B-Instruct-v1_0` GGUF `Q4_K_M`
+
+Suggested sources:
+
+- `Llama-3-Taiwan-8B-Instruct` official model card:
+  [yentinglin/Llama-3-Taiwan-8B-Instruct](https://huggingface.co/yentinglin/Llama-3-Taiwan-8B-Instruct)
+- A GGUF build you can import into Ollama:
+  [second-state/Llama-3-Taiwan-8B-Instruct-GGUF](https://huggingface.co/second-state/Llama-3-Taiwan-8B-Instruct-GGUF)
+- `Breeze-7B-Instruct-v1_0` official model card:
+  [MediaTek-Research/Breeze-7B-Instruct-v1_0](https://huggingface.co/MediaTek-Research/Breeze-7B-Instruct-v1_0)
+- A GGUF build for Breeze:
+  [YC-Chen/Breeze-7B-Instruct-v1_0-GGUF](https://huggingface.co/YC-Chen/Breeze-7B-Instruct-v1_0-GGUF)
+
+The repo includes starter Ollama import templates in [ollama_modelfiles/README.md](/Users/cheng/Documents/agents/ollama_modelfiles/README.md).
+
+Typical setup:
+
+1. Download the GGUF file you want.
+2. Place it in [ollama_modelfiles](/Users/cheng/Documents/agents/ollama_modelfiles).
+3. Use the matching `.Modelfile`.
+4. Create a local Ollama alias.
+5. Set `OLLAMA_MODEL` to that alias in `.env.local`.
+
+Example with the recommended Taiwan tutor model:
+
+```powershell
+ollama create taiwan-tutor -f .\ollama_modelfiles\llama3-taiwan-8b.Modelfile
+```
+
+Then update `.env.local`:
+
+```dotenv
+OLLAMA_MODEL=taiwan-tutor
+OLLAMA_API_URL=http://localhost:11434/api/chat
+```
+
+Then restart the terminal agent or Discord bot.
+
+Important note:
+
+Even with a Taiwan-focused model, Zhuyin can still be imperfect. For truly reliable Bopomofo output, the best long-term setup is:
+
+- a stronger Traditional Chinese model
+- plus deterministic pronunciation tooling or dictionary lookup
+
 Type `exit` or `quit` to stop.
 
 To switch personas in the terminal:

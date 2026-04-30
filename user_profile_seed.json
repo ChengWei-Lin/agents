@@ -70,6 +70,12 @@
     "separate_observation_from_interpretation": true,
     "update_when_corrected": true
   },
+  "language_learning_preferences": {
+    "traditional_chinese_pronunciation_system": "Bopomofo (Zhuyin)",
+    "show_bopomofo_beside_characters_by_default": true,
+    "show_parallel_character_or_word_glosses_for_chinese_examples": true,
+    "show_whole_phrase_meaning_for_chinese_examples": true
+  },
   "notes": [
     "This file is a starting profile seed, not a final doctrine.",
     "Items phrased as tendencies, themes, or hypotheses should remain revisable.",

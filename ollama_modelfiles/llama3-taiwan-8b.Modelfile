@@ -1,0 +1,1 @@
+FROM ./Llama-3-Taiwan-8B-Instruct-Q4_K_M.gguf

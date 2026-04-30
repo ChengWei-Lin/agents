@@ -4,16 +4,19 @@ from shutil import rmtree
 from pathlib import Path
 
 from agent import (
+    ChineseTeachingEntry,
     DEFAULT_PERSONA,
     DEFAULT_TUTOR_MODE,
     LocalAgentSession,
     MemoryStore,
     PROMPTS_DIR,
     TUTOR_MODES,
+    annotate_chinese_with_zhuyin,
     build_system_prompt,
     load_profile_seed,
     normalize_persona,
     normalize_tutor_mode,
+    render_chinese_teaching_entry,
 )
 from discord_bot import parse_allowed_channel_ids
 
@@ -69,6 +72,9 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertIn("Language Tutor", tutor_prompt)
         self.assertIn("Current tutor mode: Correction (`correction`)", tutor_prompt)
+        self.assertIn("Bopomofo", tutor_prompt)
+        self.assertIn("parallel gloss", tutor_prompt)
+        self.assertIn("whole-phrase meaning", tutor_prompt)
         self.assertIn("Preserve the threads", memory_prompt)
         self.assertIn("Structured user profile seed", memory_prompt)
 
@@ -92,6 +98,14 @@ class MemoryStoreTests(unittest.TestCase):
         profile = load_profile_seed()
 
         self.assertEqual(profile["identity"]["name"], "Cheng-Wei")
+        self.assertEqual(
+            profile["language_learning_preferences"]["traditional_chinese_pronunciation_system"],
+            "Bopomofo (Zhuyin)",
+        )
+        self.assertTrue(
+            profile["language_learning_preferences"]["show_parallel_character_or_word_glosses_for_chinese_examples"]
+        )
+        self.assertTrue(profile["language_learning_preferences"]["show_whole_phrase_meaning_for_chinese_examples"])
         self.assertIn("This file is a starting profile seed", profile["notes"][0])
 
     def test_tutor_mode_switch_updates_session(self) -> None:
@@ -101,6 +115,28 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertEqual(session.tutor_mode, "quiz")
         self.assertEqual(session.tutor_mode_label(), TUTOR_MODES["quiz"].label)
+
+    def test_annotate_chinese_with_zhuyin(self) -> None:
+        annotated = annotate_chinese_with_zhuyin("你好 - 你 (you) 好 (good) - Hello.")
+
+        self.assertIn("你好 (ㄋㄧ", annotated)
+        self.assertIn("你 (ㄋㄧ", annotated)
+        self.assertIn("好 (ㄏㄠˇ) (good)", annotated)
+
+    def test_render_chinese_teaching_entry(self) -> None:
+        rendered = render_chinese_teaching_entry(
+            ChineseTeachingEntry(
+                phrase="你好",
+                glosses=["你 You", "好 Good"],
+                meaning="\"Hello.\" Used to greet one person.",
+            )
+        )
+
+        self.assertIn("你好 (", rendered)
+        self.assertIn(")", rendered)
+        self.assertIn("Meaning:", rendered)
+        self.assertIn("- 你 (ㄋㄧ", rendered)
+        self.assertIn("- 你好 (", rendered)
 
     def test_parse_allowed_channel_ids(self) -> None:
         parsed = parse_allowed_channel_ids("123, 456, nope, 789")

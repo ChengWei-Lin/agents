@@ -5,3 +5,4 @@ memories/
 tests/.tmp/
 *.egg-info/
 .env.local
+ollama_modelfiles/*.gguf

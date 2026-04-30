@@ -2,21 +2,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib import error, request
 
+from pypinyin import Style, lazy_pinyin
 
-OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/chat")
-DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+
 MEMORY_PATH = Path(__file__).with_name("memory.json")
 MEMORIES_DIR = Path(__file__).with_name("memories")
 ENV_FILE_PATH = Path(__file__).with_name(".env.local")
 PROMPTS_DIR = Path(__file__).with_name("prompts")
 PROFILE_SEED_PATH = Path(__file__).with_name("user_profile_seed.json")
 DEFAULT_PERSONA = "mnemosyne"
+CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
+CHINESE_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+PINYIN_PAREN_RE = re.compile(r"\([^()]*[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜüńňǹĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛÜ][^()]*\)")
 
 
 @dataclass(frozen=True)
@@ -32,6 +38,13 @@ class TutorMode:
     key: str
     label: str
     instructions: str
+
+
+@dataclass(frozen=True)
+class ChineseTeachingEntry:
+    phrase: str
+    glosses: list[str]
+    meaning: str
 
 
 PERSONAS: dict[str, Persona] = {
@@ -127,6 +140,16 @@ def load_env_file(path: Path = ENV_FILE_PATH) -> None:
 
 
 load_env_file()
+OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/chat")
+DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+
+
+def configure_stdio() -> None:
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def load_text_if_exists(path: Path | None, fallback: str) -> str:
@@ -310,7 +333,7 @@ class LocalAgentSession:
             tools=self.tools,
             messages=self.messages,
         )
-        return answer
+        return postprocess_answer(answer, self.persona_key)
 
     def reset_history(self) -> None:
         self.messages = [{"role": "system", "content": build_system_prompt(self.persona_key, self.tutor_mode)}]
@@ -394,8 +417,317 @@ def create_response(payload: dict[str, Any]) -> dict[str, Any]:
         return json.loads(resp.read().decode("utf-8"))
 
 
+@lru_cache(maxsize=8)
+def model_supports_tools(model_name: str) -> bool:
+    payload = {"name": model_name}
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        OLLAMA_API_URL.replace("/api/chat", "/api/show"),
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(req, timeout=30) as resp:
+        details = json.loads(resp.read().decode("utf-8"))
+    capabilities = details.get("capabilities") or []
+    return "tools" in capabilities
+
+
 def assistant_text(message: dict[str, Any]) -> str:
     return str(message.get("content", "")).strip()
+
+
+def text_contains_chinese(text: str) -> bool:
+    return bool(CHINESE_CHAR_RE.search(text))
+
+
+def zhuyin_syllables(text: str) -> list[str]:
+    return lazy_pinyin(
+        text,
+        style=Style.BOPOMOFO,
+        tone_sandhi=True,
+        errors=lambda chars: list(chars),
+    )
+
+
+def pinyin_syllables(text: str) -> list[str]:
+    return lazy_pinyin(
+        text,
+        style=Style.TONE,
+        tone_sandhi=True,
+        errors=lambda chars: list(chars),
+    )
+
+
+def strip_parenthetical_pinyin(text: str) -> str:
+    cleaned = PINYIN_PAREN_RE.sub("", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def reformat_chinese_teaching_response(text: str) -> str:
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a strict formatter for Chinese language-learning examples.\n"
+                    "Rewrite the content into compact beginner-friendly teaching examples only.\n"
+                    "Use English for all meanings and explanations.\n"
+                    "For each phrase, use exactly this shape:\n"
+                    "PHRASE\n"
+                    "Meaning:\n"
+                    "- CHARACTER_OR_WORD_GLOSS\n"
+                    "- WHOLE_PHRASE_MEANING_AND_USE\n"
+                    "Rules:\n"
+                    "- Use Traditional Chinese for the phrase.\n"
+                    "- Use English glosses, for example: 你 (you) 好 (good).\n"
+                    "- Keep the meaning section in English, not Chinese.\n"
+                    "- Use a natural whole-phrase meaning at the end, for example: 你好 \"Hello.\" Used to greet one person.\n"
+                    "- No introductions, no conclusions, and no extra commentary.\n"
+                    "- Keep to at most two phrases unless the user asked for more."
+                ),
+            },
+            {
+                "role": "user",
+                "content": text,
+            },
+        ],
+        "stream": False,
+        "think": False,
+    }
+    response = create_response(payload)
+    return assistant_text(response["message"])
+
+
+def extract_json_block(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def parse_reformatted_teaching_entries(text: str) -> list[ChineseTeachingEntry]:
+    entries: list[ChineseTeachingEntry] = []
+    current_phrase = ""
+    current_glosses: list[str] = []
+    current_meaning = ""
+    state = ""
+
+    def flush() -> None:
+        nonlocal current_phrase, current_glosses, current_meaning
+        if current_phrase and current_glosses and current_meaning:
+            entries.append(
+                ChineseTeachingEntry(
+                    phrase=current_phrase,
+                    glosses=current_glosses[:],
+                    meaning=current_meaning,
+                )
+            )
+        current_phrase = ""
+        current_glosses = []
+        current_meaning = ""
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        phrase_match = re.match(r"^(?:\d+[.)]\s+)?([\u4e00-\u9fff]{1,8})$", line)
+        if phrase_match:
+            flush()
+            current_phrase = phrase_match.group(1)
+            state = ""
+            continue
+        if line.lower() == "meaning:":
+            state = "gloss"
+            continue
+        if line.lower().startswith("whole phrase meaning and use"):
+            state = "meaning"
+            continue
+        if line.startswith("-") and state == "gloss":
+            gloss = line[1:].strip()
+            gloss = strip_parenthetical_pinyin(gloss)
+            current_glosses.append(gloss)
+            continue
+        if state == "meaning" and not current_meaning:
+            current_meaning = line.strip()
+            continue
+
+    flush()
+    return entries
+
+
+def candidate_chinese_phrases(text: str, limit: int = 2) -> list[str]:
+    phrases: list[str] = []
+    for chunk in CHINESE_RUN_RE.findall(text):
+        if not 2 <= len(chunk) <= 8:
+            continue
+        if chunk not in phrases:
+            phrases.append(chunk)
+        if len(phrases) >= limit:
+            break
+    return phrases
+
+
+def extract_chinese_teaching_entries(text: str) -> list[ChineseTeachingEntry]:
+    parsed_entries = parse_reformatted_teaching_entries(text)
+    if parsed_entries:
+        return parsed_entries
+
+    phrases = candidate_chinese_phrases(text)
+    if not phrases:
+        return []
+
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Create beginner Chinese teaching entries for the exact phrases provided by the user.\n"
+                    "Return JSON only. No markdown.\n"
+                    "Schema:\n"
+                    "[{\"phrase\":\"你好\",\"glosses\":[\"你 You\",\"好 Good\"],\"meaning\":\"\\\"Hello.\\\" Used to greet one person.\"}]\n"
+                    "Rules:\n"
+                    "- Use exactly the phrases given by the user.\n"
+                    "- `glosses` must be short English gloss lines, one per character or word.\n"
+                    "- `meaning` must be English only.\n"
+                    "- Keep the output compact and beginner-friendly.\n"
+                    "- If a phrase is a greeting, the meaning should explain natural usage, not just literal meaning."
+                ),
+            },
+            {
+                "role": "user",
+                "content": "\n".join(phrases),
+            },
+        ],
+        "stream": False,
+        "think": False,
+    }
+    response = create_response(payload)
+    raw = extract_json_block(assistant_text(response["message"]))
+    loaded = json.loads(raw)
+    entries: list[ChineseTeachingEntry] = []
+    if not isinstance(loaded, list):
+        return entries
+    for item in loaded:
+        if not isinstance(item, dict):
+            continue
+        phrase = "".join(CHINESE_RUN_RE.findall(str(item.get("phrase", ""))))
+        glosses_raw = item.get("glosses", [])
+        meaning = str(item.get("meaning", "")).strip()
+        if not phrase or not isinstance(glosses_raw, list) or not meaning:
+            continue
+        glosses = [str(gloss).strip() for gloss in glosses_raw if str(gloss).strip()]
+        if not glosses:
+            continue
+        entries.append(ChineseTeachingEntry(phrase=phrase, glosses=glosses, meaning=meaning))
+    return entries
+
+
+def annotate_phrase_with_zhuyin(text: str) -> str:
+    zhuyin = zhuyin_syllables(text)
+    pinyin = pinyin_syllables(text)
+    if not zhuyin:
+        return text
+    if pinyin:
+        return f"{text} ({' '.join(zhuyin)}) ({' '.join(pinyin)})"
+    return f"{text} ({' '.join(zhuyin)})"
+
+
+def annotate_gloss_segment(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        chunk = match.group(0)
+        syllables = zhuyin_syllables(chunk)
+        if not syllables:
+            return chunk
+        if len(chunk) <= 4:
+            return " ".join(f"{char} ({syllable})" for char, syllable in zip(chunk, syllables))
+        return f"{chunk} ({' '.join(syllables)})"
+
+    return CHINESE_RUN_RE.sub(replace, text)
+
+
+def render_chinese_teaching_entry(entry: ChineseTeachingEntry) -> str:
+    lines = [annotate_phrase_with_zhuyin(entry.phrase), "Meaning:"]
+    for index, gloss in enumerate(entry.glosses):
+        rendered_gloss = gloss
+        if index < len(entry.phrase) and not text_contains_chinese(gloss):
+            rendered_gloss = f"{entry.phrase[index]} {gloss}"
+        lines.append(f"- {annotate_gloss_segment(rendered_gloss)}")
+    lines.append(f"- {annotate_phrase_with_zhuyin(entry.phrase)} {entry.meaning}")
+    return "\n".join(lines)
+
+
+def normalize_chinese_teaching_line(line: str) -> str:
+    stripped = strip_parenthetical_pinyin(line)
+    if " - " not in stripped:
+        chinese_only = "".join(CHINESE_RUN_RE.findall(stripped))
+        if 1 <= len(chinese_only) <= 8:
+            return annotate_phrase_with_zhuyin(chinese_only)
+        return stripped
+
+    parts = [part.strip() for part in stripped.split(" - ")]
+    if not parts:
+        return stripped
+
+    prefix = ""
+    head = parts[0]
+    marker_match = re.match(r"^(\s*(?:[-*]|\d+[.)])\s+)(.+)$", head)
+    if marker_match:
+        prefix = marker_match.group(1)
+        head = marker_match.group(2)
+
+    phrase = "".join(CHINESE_RUN_RE.findall(head))
+    if 1 <= len(phrase) <= 8:
+        parts[0] = f"{prefix}{annotate_phrase_with_zhuyin(phrase)}"
+    else:
+        parts[0] = f"{prefix}{head}".strip()
+
+    if len(parts) >= 2:
+        parts[1] = annotate_gloss_segment(parts[1])
+
+    return " - ".join(parts)
+
+
+def annotate_chinese_with_zhuyin(text: str) -> str:
+    if not text_contains_chinese(text):
+        return text
+
+    annotated_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        chinese_count = len(CHINESE_CHAR_RE.findall(line))
+
+        if not chinese_count:
+            annotated_lines.append(line)
+            continue
+
+        if chinese_count <= 24:
+            annotated_lines.append(normalize_chinese_teaching_line(line))
+            continue
+
+        annotated_lines.append(line)
+
+    return "\n".join(annotated_lines)
+
+
+def postprocess_answer(answer: str, persona: str) -> str:
+    if normalize_persona(persona) != "language_tutor":
+        return answer
+    if text_contains_chinese(answer):
+        try:
+            answer = reformat_chinese_teaching_response(answer)
+            entries = extract_chinese_teaching_entries(answer)
+            if entries:
+                return "\n\n".join(render_chinese_teaching_entry(entry) for entry in entries)
+        except Exception:
+            pass
+    return annotate_chinese_with_zhuyin(answer)
 
 
 def run_agent_turn(
@@ -404,17 +736,18 @@ def run_agent_turn(
     messages: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
     messages.append({"role": "user", "content": user_text})
+    include_tools = model_supports_tools(DEFAULT_MODEL)
 
     while True:
-        response = create_response(
-            {
-                "model": DEFAULT_MODEL,
-                "messages": messages,
-                "tools": tools.schemas(),
-                "stream": False,
-                "think": False,
-            }
-        )
+        payload = {
+            "model": DEFAULT_MODEL,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+        }
+        if include_tools:
+            payload["tools"] = tools.schemas()
+        response = create_response(payload)
         message = response["message"]
         messages.append(message)
 
@@ -439,6 +772,7 @@ def run_agent_turn(
 
 
 def main() -> int:
+    configure_stdio()
     session = LocalAgentSession(MEMORY_PATH)
 
     print(f"Starter Agent running with model: {DEFAULT_MODEL}")
