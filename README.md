@@ -66,6 +66,7 @@ Why slash commands first:
 - `/agent prompt:<your question>` asks the local model for help
 - `/agent-reset` clears your current conversation history only
 - `/agent-forget-all` deletes saved memory and resets chat history
+- `/agent-status` shows the current model, endpoint, memory count, and channel restriction status
 - each Discord user gets a separate local memory file in `memories/`
 
 ### Discord setup
@@ -86,8 +87,38 @@ Official references:
 
 - `DISCORD_BOT_TOKEN` - required
 - `DISCORD_GUILD_ID` - optional but recommended during development for faster slash command sync in one server
+- `DISCORD_ALLOWED_CHANNEL_IDS` - optional comma-separated channel IDs to restrict commands to specific channels
 - `OLLAMA_MODEL` - optional, defaults to `qwen2.5:3b`
 - `OLLAMA_API_URL` - optional, defaults to `http://localhost:11434/api/chat`
+- `.env.local` - optional local config file that is auto-loaded by both `agent.py` and `discord_bot.py`
+
+### Easy local config
+
+To avoid re-exporting variables every time, copy `.env.local.example` to `.env.local` and fill in your values.
+
+Git Bash:
+
+```bash
+cp ./.env.local.example ./.env.local
+```
+
+PowerShell:
+
+```powershell
+Copy-Item .\.env.local.example .\.env.local
+```
+
+You can then keep your Discord token, guild ID, default model, and optional allowed channel IDs in one private file.
+
+Example:
+
+```dotenv
+OLLAMA_MODEL=qwen2.5:3b
+OLLAMA_API_URL=http://localhost:11434/api/chat
+DISCORD_BOT_TOKEN=your_bot_token_here
+DISCORD_GUILD_ID=1490977470260707328
+DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678,234567890123456789
+```
 
 ### Run the Discord bot
 
@@ -105,13 +136,24 @@ Git Bash:
 
 ```bash
 export PATH="$LOCALAPPDATA/Programs/Ollama:$PATH"
-python -m pip install -e .
-export DISCORD_BOT_TOKEN="your_token_here"
-export DISCORD_GUILD_ID="your_server_id"
-python ./discord_bot.py
+/c/Python313/python.exe -m pip install -e .
+/c/Python313/python.exe ./discord_bot.py
 ```
 
 If you omit `DISCORD_GUILD_ID`, global slash command sync still works, but it can take longer to appear.
+If you use `.env.local`, you usually do not need to export the Discord variables manually.
+
+### Restricting the bot to one channel
+
+If you only want the bot to work in one Discord channel, right-click that channel in Discord with Developer Mode enabled and copy its channel ID.
+
+Then put it into `.env.local`:
+
+```dotenv
+DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678
+```
+
+You can also allow multiple channels by separating IDs with commas.
 
 ## What the agent can do
 

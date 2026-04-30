@@ -4,6 +4,7 @@ from shutil import rmtree
 from pathlib import Path
 
 from agent import MemoryStore
+from discord_bot import parse_allowed_channel_ids
 
 
 class MemoryStoreTests(unittest.TestCase):
@@ -42,6 +43,11 @@ class MemoryStoreTests(unittest.TestCase):
 
         self.assertFalse(path.exists())
         self.assertEqual(store.list(), [])
+
+    def test_parse_allowed_channel_ids(self) -> None:
+        parsed = parse_allowed_channel_ids("123, 456, nope, 789")
+
+        self.assertEqual(parsed, {123, 456, 789})
 
 
 if __name__ == "__main__":

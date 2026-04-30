@@ -4,3 +4,4 @@ memory.json
 memories/
 tests/.tmp/
 *.egg-info/
+.env.local

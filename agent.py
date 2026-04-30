@@ -13,6 +13,7 @@ OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/ch
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
 MEMORY_PATH = Path(__file__).with_name("memory.json")
 MEMORIES_DIR = Path(__file__).with_name("memories")
+ENV_FILE_PATH = Path(__file__).with_name(".env.local")
 
 
 SYSTEM_PROMPT = """
@@ -24,6 +25,24 @@ consider saving it with save_memory.
 
 Keep answers concise and useful.
 """.strip()
+
+
+def load_env_file(path: Path = ENV_FILE_PATH) -> None:
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_env_file()
 
 
 class MemoryStore:
@@ -182,6 +201,9 @@ class LocalAgentSession:
     def forget_all(self) -> None:
         self.reset_history()
         self.memory.clear()
+
+    def memory_count(self) -> int:
+        return len(self.memory.list())
 
 
 def memory_path_for_identity(identity: str) -> Path:
