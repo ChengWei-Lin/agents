@@ -1,0 +1,78 @@
+{
+  "identity": {
+    "name": "Cheng-Wei",
+    "orientation": "Ambitious, but appears to be motivated more by meaning and human impact than by status, money, or superficial productivity.",
+    "interaction_style_preferences": [
+      "Calm",
+      "Reflective",
+      "Structured",
+      "Curious",
+      "Intellectually serious without arrogance"
+    ],
+    "avoid_styles": [
+      "Excessive hype",
+      "Shallow startup language",
+      "Empty motivational tone",
+      "Over-optimization culture"
+    ]
+  },
+  "working_hypotheses": {
+    "recurring_intellectual_theme": "A recurring theme appears to be: what hidden signals reveal truth.",
+    "thinking_style": "He seems to think in connected systems and naturally links papers, conversations, experiences, philosophical ideas, technical systems, and emotional meaning.",
+    "epistemic_preference": "He appears to value truthful uncertainty over confident simplification."
+  },
+  "interests": {
+    "research_directions": [
+      "Meaningful research",
+      "Interpretable systems",
+      "Human-centered AI",
+      "Knowledge that changes how people understand reality"
+    ],
+    "concepts": [
+      "Interpretability",
+      "Memory",
+      "Authenticity",
+      "Cognition",
+      "Latent representations",
+      "Epistemology",
+      "Signal vs noise",
+      "Human meaning",
+      "Scientific curiosity"
+    ],
+    "related_domains": [
+      "Deepfake detection",
+      "Explainability",
+      "Speech analysis",
+      "Forensic reasoning",
+      "Knowledge systems",
+      "Memory architectures",
+      "Human communication"
+    ]
+  },
+  "long_term_context": {
+    "archive_view": "His notes, papers, experiments, ideas, conversations, and reflections may be part of a persistent research archive rather than disposable outputs.",
+    "ideal_ai_role": [
+      "Thinking collaborator",
+      "Research companion",
+      "Intellectual mirror",
+      "Memory system with reasoning capability"
+    ],
+    "possible_long_term_mission": [
+      "Build interpretable AI systems",
+      "Build trustworthy human-centered technology",
+      "Build integrated knowledge systems",
+      "Understand how humans encode meaning into signals, language, memory, and interaction"
+    ]
+  },
+  "response_guidelines": {
+    "preserve_nuance": true,
+    "show_assumptions_when_relevant": true,
+    "separate_observation_from_interpretation": true,
+    "update_when_corrected": true
+  },
+  "notes": [
+    "This file is a starting profile seed, not a final doctrine.",
+    "Items phrased as tendencies, themes, or hypotheses should remain revisable.",
+    "Direct user corrections should override this seed."
+  ]
+}

@@ -14,6 +14,7 @@ It is intentionally much smaller than Hermes Agent, but it borrows the same core
 - Ollama local model integration
 - function calling for local tools
 - persistent JSON memory
+- multiple personas sharing one memory core
 - a simple "save what matters" pattern you can inspect and change
 
 ## Files
@@ -22,6 +23,52 @@ It is intentionally much smaller than Hermes Agent, but it borrows the same core
 - `agent.py` - runnable CLI agent
 - `discord_bot.py` - Discord slash-command bot using the same local agent core
 - `tests/test_memory_store.py` - small tests for the memory layer
+
+## Shared memory, multiple personas
+
+The project now supports one memory core with multiple agent personas.
+
+That means:
+
+- the same user can talk to different personas
+- each persona keeps its own chat history and tone
+- all personas share the same durable memory file for that user
+
+This is a good fit if you want:
+
+- `Mnemosyne` to remember your life, preferences, and long-term context
+- `Language Tutor` to help with Chinese and German practice
+- `General Assistant` for everything else
+
+Current built-in personas:
+
+- `mnemosyne` - long-term knowledge keeper
+- `language_tutor` - Chinese and German coach
+- `general` - flexible default helper
+
+Language Tutor also supports lesson modes:
+
+- `conversation` - open-ended practice in the target language
+- `correction` - correct the learner's sentence first, then explain briefly
+- `translation` - translate with nuance notes when needed
+- `drill` - one focused exercise at a time
+- `quiz` - short vocabulary or grammar checks
+
+Mnemosyne now has two separate artifacts in the repo:
+
+- [prompts/mnemosyne.md](/Users/cheng/Documents/agents/prompts/mnemosyne.md) - behavior and role prompt
+- [user_profile_seed.json](/Users/cheng/Documents/agents/user_profile_seed.json) - structured starting profile for Cheng-Wei
+
+Language Tutor has its own prompt file too:
+
+- [prompts/language_tutor.md](/Users/cheng/Documents/agents/prompts/language_tutor.md) - teaching behavior and language-learning guidance
+
+This split is intentional:
+
+- the prompt defines how Mnemosyne should think and respond
+- the profile seed defines what Mnemosyne currently believes about the user
+
+The profile seed is treated as revisable context, not unquestionable truth. If the user corrects it, the live conversation and stored memory should take precedence.
 
 ## Quick start
 
@@ -44,6 +91,25 @@ python .\agent.py
 
 Type `exit` or `quit` to stop.
 
+To switch personas in the terminal:
+
+```text
+/persona mnemosyne
+/persona language_tutor
+/persona general
+```
+
+To switch language tutor modes in the terminal:
+
+```text
+/persona language_tutor
+/mode conversation
+/mode correction
+/mode translation
+/mode drill
+/mode quiz
+```
+
 Optional custom Ollama endpoint:
 
 ```powershell
@@ -64,6 +130,9 @@ Why slash commands first:
 ### What it does
 
 - `/agent prompt:<your question>` asks the local model for help
+- `/agent persona:<optional persona> tutor_mode:<optional mode> prompt:<your question>` asks a specific persona for help
+- `/agent-persona persona:<persona>` sets your default persona for later chats
+- `/agent-mode tutor_mode:<mode>` sets your default language tutor mode
 - `/agent-reset` clears your current conversation history only
 - `/agent-forget-all` deletes saved memory and resets chat history
 - `/agent-status` shows the current model, endpoint, memory count, and channel restriction status
@@ -165,6 +234,11 @@ Today it has four local tools:
 - `search_memories`
 
 The model can call these tools when useful. For example, if you tell it your preferred stack or ask it to remember a project decision, it can store that in `memory.json`.
+
+With personas enabled, that same memory can be reused across roles. For example:
+
+- Mnemosyne remembers that you prefer Traditional Chinese
+- the Language Tutor can later use that preference without relearning it
 
 ## How this compares to Hermes Agent
 

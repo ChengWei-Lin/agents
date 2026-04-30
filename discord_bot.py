@@ -6,7 +6,19 @@ from typing import Final
 import discord
 from discord import app_commands
 
-from agent import DEFAULT_MODEL, ENV_FILE_PATH, LocalAgentSession, OLLAMA_API_URL, memory_path_for_identity
+from agent import (
+    DEFAULT_MODEL,
+    DEFAULT_PERSONA,
+    DEFAULT_TUTOR_MODE,
+    ENV_FILE_PATH,
+    LocalAgentSession,
+    OLLAMA_API_URL,
+    PERSONAS,
+    TUTOR_MODES,
+    memory_path_for_identity,
+    normalize_persona,
+    normalize_tutor_mode,
+)
 
 
 BOT_TOKEN_ENV: Final[str] = "DISCORD_BOT_TOKEN"
@@ -30,14 +42,48 @@ class AgentDiscordBot(discord.Client):
         intents = discord.Intents.default()
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
-        self.sessions: dict[str, LocalAgentSession] = {}
+        self.sessions: dict[tuple[str, str, str], LocalAgentSession] = {}
+        self.default_personas: dict[str, str] = {}
+        self.default_tutor_modes: dict[str, str] = {}
         self.allowed_channel_ids = parse_allowed_channel_ids(os.environ.get(ALLOWED_CHANNELS_ENV))
 
-    def session_for_user(self, user_id: int) -> LocalAgentSession:
+    def persona_for_user(self, user_id: int) -> str:
         key = str(user_id)
-        if key not in self.sessions:
-            self.sessions[key] = LocalAgentSession(memory_path_for_identity(key))
-        return self.sessions[key]
+        return self.default_personas.get(key, DEFAULT_PERSONA)
+
+    def set_persona_for_user(self, user_id: int, persona: str) -> str:
+        key = str(user_id)
+        chosen = normalize_persona(persona)
+        self.default_personas[key] = chosen
+        return chosen
+
+    def tutor_mode_for_user(self, user_id: int) -> str:
+        key = str(user_id)
+        return self.default_tutor_modes.get(key, DEFAULT_TUTOR_MODE)
+
+    def set_tutor_mode_for_user(self, user_id: int, tutor_mode: str) -> str:
+        key = str(user_id)
+        chosen = normalize_tutor_mode(tutor_mode)
+        self.default_tutor_modes[key] = chosen
+        return chosen
+
+    def session_for_user(
+        self,
+        user_id: int,
+        persona: str | None = None,
+        tutor_mode: str | None = None,
+    ) -> LocalAgentSession:
+        user_key = str(user_id)
+        persona_key = normalize_persona(persona or self.persona_for_user(user_id))
+        tutor_mode_key = normalize_tutor_mode(tutor_mode or self.tutor_mode_for_user(user_id))
+        session_key = (user_key, persona_key, tutor_mode_key)
+        if session_key not in self.sessions:
+            self.sessions[session_key] = LocalAgentSession(
+                memory_path_for_identity(user_key),
+                persona=persona_key,
+                tutor_mode=tutor_mode_key,
+            )
+        return self.sessions[session_key]
 
     def channel_allowed(self, interaction: discord.Interaction) -> bool:
         if not self.allowed_channel_ids:
@@ -66,20 +112,49 @@ class AgentDiscordBot(discord.Client):
 
 
 client = AgentDiscordBot()
+PERSONA_CHOICES = [
+    app_commands.Choice(name=persona.label, value=persona.key)
+    for persona in PERSONAS.values()
+]
+TUTOR_MODE_CHOICES = [
+    app_commands.Choice(name=mode.label, value=mode.key)
+    for mode in TUTOR_MODES.values()
+]
 
 
 @client.tree.command(name="agent", description="Ask your local Ollama agent for help.")
 @app_commands.describe(prompt="What you want the agent to help with")
-async def agent_command(interaction: discord.Interaction, prompt: str) -> None:
+@app_commands.describe(persona="Optional persona override for this message")
+@app_commands.describe(tutor_mode="Optional lesson mode for language_tutor")
+@app_commands.choices(persona=PERSONA_CHOICES)
+@app_commands.choices(tutor_mode=TUTOR_MODE_CHOICES)
+async def agent_command(
+    interaction: discord.Interaction,
+    prompt: str,
+    persona: app_commands.Choice[str] | None = None,
+    tutor_mode: app_commands.Choice[str] | None = None,
+) -> None:
     if await client.reject_if_disallowed(interaction):
         return
     await interaction.response.defer(thinking=True)
-    session = client.session_for_user(interaction.user.id)
+    session = client.session_for_user(
+        interaction.user.id,
+        persona.value if persona else None,
+        tutor_mode.value if tutor_mode else None,
+    )
     try:
         answer = session.run(prompt)
     except Exception as exc:  # noqa: BLE001
         await interaction.followup.send(f"Agent error: {exc}")
         return
+
+    header = ""
+    if persona is not None or (tutor_mode is not None and session.persona_key == "language_tutor"):
+        header = f"[{session.persona_label()}"
+        if session.persona_key == "language_tutor":
+            header += f" | {session.tutor_mode_label()}"
+        header += "]\n"
+        answer = f"{header}{answer}"
 
     if len(answer) <= 1900:
         await interaction.followup.send(answer)
@@ -97,16 +172,55 @@ async def reset_command(interaction: discord.Interaction) -> None:
         return
     session = client.session_for_user(interaction.user.id)
     session.reset_history()
-    await interaction.response.send_message("Your agent chat history has been reset.", ephemeral=True)
+    await interaction.response.send_message(
+        f"Your {session.persona_label()} chat history has been reset.",
+        ephemeral=True,
+    )
 
 
 @client.tree.command(name="agent-forget-all", description="Delete your saved memory and reset chat history.")
 async def forget_all_command(interaction: discord.Interaction) -> None:
     if await client.reject_if_disallowed(interaction):
         return
-    session = client.session_for_user(interaction.user.id)
-    session.forget_all()
+    user_key = str(interaction.user.id)
+    for persona_key in PERSONAS:
+        for tutor_mode_key in TUTOR_MODES:
+            client.session_for_user(interaction.user.id, persona_key, tutor_mode_key).forget_all()
+    client.sessions = {
+        key: value for key, value in client.sessions.items() if key[0] != user_key
+    }
     await interaction.response.send_message("Your saved memory and chat history have been deleted.", ephemeral=True)
+
+
+@client.tree.command(name="agent-persona", description="Set your default persona for future agent chats.")
+@app_commands.describe(persona="Which persona should be your default")
+@app_commands.choices(persona=PERSONA_CHOICES)
+async def persona_command(interaction: discord.Interaction, persona: app_commands.Choice[str]) -> None:
+    if await client.reject_if_disallowed(interaction):
+        return
+    chosen = client.set_persona_for_user(interaction.user.id, persona.value)
+    session = client.session_for_user(interaction.user.id, chosen)
+    await interaction.response.send_message(
+        f"Default persona set to {session.persona_label()} (`{chosen}`). Shared memory stays the same across personas.",
+        ephemeral=True,
+    )
+
+
+@client.tree.command(name="agent-mode", description="Set your default tutor mode for language learning chats.")
+@app_commands.describe(tutor_mode="Which language tutor mode should be your default")
+@app_commands.choices(tutor_mode=TUTOR_MODE_CHOICES)
+async def tutor_mode_command(
+    interaction: discord.Interaction,
+    tutor_mode: app_commands.Choice[str],
+) -> None:
+    if await client.reject_if_disallowed(interaction):
+        return
+    chosen = client.set_tutor_mode_for_user(interaction.user.id, tutor_mode.value)
+    session = client.session_for_user(interaction.user.id, "language_tutor", chosen)
+    await interaction.response.send_message(
+        f"Default language tutor mode set to {session.tutor_mode_label()} (`{chosen}`).",
+        ephemeral=True,
+    )
 
 
 @client.tree.command(name="agent-status", description="Show the current local bot configuration and memory status.")
@@ -122,6 +236,10 @@ async def status_command(interaction: discord.Interaction) -> None:
     )
     lines = [
         f"Model: `{DEFAULT_MODEL}`",
+        f"Default persona: `{session.persona_key}` ({session.persona_label()})",
+        f"Available personas: `{', '.join(sorted(PERSONAS))}`",
+        f"Default tutor mode: `{client.tutor_mode_for_user(interaction.user.id)}`",
+        f"Available tutor modes: `{', '.join(sorted(TUTOR_MODES))}`",
         f"Ollama endpoint: `{OLLAMA_API_URL}`",
         f"Guild sync ID: `{os.environ.get(GUILD_ID_ENV, 'not set')}`",
         f"Allowed channels: `{allowed_channels}`",
