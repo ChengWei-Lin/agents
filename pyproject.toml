@@ -3,7 +3,13 @@ name = "starter-agent"
 version = "0.1.0"
 description = "A small Hermes-inspired starter agent built with Codex."
 requires-python = ">=3.11"
+dependencies = [
+    "discord.py>=2.5,<3",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["agent", "discord_bot"]

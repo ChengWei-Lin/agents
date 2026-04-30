@@ -33,6 +33,16 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["category"], "decision")
 
+    def test_clear(self) -> None:
+        path = self.make_store_path()
+        store = MemoryStore(path)
+        store.add("preference", "User likes Python.")
+
+        store.clear()
+
+        self.assertFalse(path.exists())
+        self.assertEqual(store.list(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

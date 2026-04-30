@@ -20,6 +20,7 @@ It is intentionally much smaller than Hermes Agent, but it borrows the same core
 
 - `pyproject.toml` - project metadata
 - `agent.py` - runnable CLI agent
+- `discord_bot.py` - Discord slash-command bot using the same local agent core
 - `tests/test_memory_store.py` - small tests for the memory layer
 
 ## Quick start
@@ -49,6 +50,68 @@ Optional custom Ollama endpoint:
 $env:OLLAMA_API_URL="http://localhost:11434/api/chat"
 python .\agent.py
 ```
+
+## Discord bot quick start
+
+The project now includes a Discord bot entrypoint built on top of the same local Ollama agent.
+
+Why slash commands first:
+
+- easier to set up than raw message listeners
+- no need to depend on message content intent for the first version
+- safer and more predictable in shared servers
+
+### What it does
+
+- `/agent prompt:<your question>` asks the local model for help
+- `/agent-reset` clears your current conversation history only
+- `/agent-forget-all` deletes saved memory and resets chat history
+- each Discord user gets a separate local memory file in `memories/`
+
+### Discord setup
+
+1. Create a Discord application and bot in the Developer Portal.
+2. Copy the bot token.
+3. Invite the bot to your server with the `bot` and `applications.commands` scopes.
+4. Install the Python dependency.
+5. Run the bot locally on your machine.
+
+Official references:
+
+- [Discord Bots](https://discord.com/developers/docs/bots)
+- [Discord quick start](https://docs.discord.com/developers/quick-start/getting-started)
+- [discord.py quickstart](https://discordpy.readthedocs.io/en/v2.3.1/quickstart.html)
+
+### Environment variables
+
+- `DISCORD_BOT_TOKEN` - required
+- `DISCORD_GUILD_ID` - optional but recommended during development for faster slash command sync in one server
+- `OLLAMA_MODEL` - optional, defaults to `qwen2.5:3b`
+- `OLLAMA_API_URL` - optional, defaults to `http://localhost:11434/api/chat`
+
+### Run the Discord bot
+
+PowerShell:
+
+```powershell
+$env:Path="$env:LOCALAPPDATA\Programs\Ollama;$env:Path"
+python -m pip install -e .
+$env:DISCORD_BOT_TOKEN="your_token_here"
+$env:DISCORD_GUILD_ID="your_server_id"
+python .\discord_bot.py
+```
+
+Git Bash:
+
+```bash
+export PATH="$LOCALAPPDATA/Programs/Ollama:$PATH"
+python -m pip install -e .
+export DISCORD_BOT_TOKEN="your_token_here"
+export DISCORD_GUILD_ID="your_server_id"
+python ./discord_bot.py
+```
+
+If you omit `DISCORD_GUILD_ID`, global slash command sync still works, but it can take longer to appear.
 
 ## What the agent can do
 

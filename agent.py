@@ -12,6 +12,7 @@ from urllib import error, request
 OLLAMA_API_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/chat")
 DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
 MEMORY_PATH = Path(__file__).with_name("memory.json")
+MEMORIES_DIR = Path(__file__).with_name("memories")
 
 
 SYSTEM_PROMPT = """
@@ -62,6 +63,10 @@ class MemoryStore:
             for item in self._load()
             if needle in item["category"].lower() or needle in item["content"].lower()
         ]
+
+    def clear(self) -> None:
+        if self.path.exists():
+            self.path.unlink()
 
 
 @dataclass
@@ -157,6 +162,36 @@ class AgentTools:
         raise ValueError(f"Unknown tool: {name}")
 
 
+class LocalAgentSession:
+    def __init__(self, memory_path: Path) -> None:
+        self.memory = MemoryStore(memory_path)
+        self.tools = AgentTools(self.memory)
+        self.messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    def run(self, user_text: str) -> str:
+        answer, self.messages = run_agent_turn(
+            user_text=user_text,
+            tools=self.tools,
+            messages=self.messages,
+        )
+        return answer
+
+    def reset_history(self) -> None:
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    def forget_all(self) -> None:
+        self.reset_history()
+        self.memory.clear()
+
+
+def memory_path_for_identity(identity: str) -> Path:
+    MEMORIES_DIR.mkdir(parents=True, exist_ok=True)
+    safe_identity = "".join(ch for ch in identity if ch.isalnum() or ch in {"-", "_"})
+    if not safe_identity:
+        safe_identity = "default"
+    return MEMORIES_DIR / f"{safe_identity}.json"
+
+
 def create_response(payload: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
@@ -216,9 +251,7 @@ def run_agent_turn(
 
 
 def main() -> int:
-    memory = MemoryStore(MEMORY_PATH)
-    tools = AgentTools(memory)
-    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    session = LocalAgentSession(MEMORY_PATH)
 
     print(f"Starter Agent running with model: {DEFAULT_MODEL}")
     print(f"Ollama endpoint: {OLLAMA_API_URL}")
@@ -238,11 +271,7 @@ def main() -> int:
             return 0
 
         try:
-            answer, messages = run_agent_turn(
-                user_text=user_text,
-                tools=tools,
-                messages=messages,
-            )
+            answer = session.run(user_text)
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             print(f"\nAPI error: {exc.code} {detail}")

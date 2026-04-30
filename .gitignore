@@ -1,4 +1,6 @@
 __pycache__/
 *.py[cod]
 memory.json
+memories/
 tests/.tmp/
+*.egg-info/
