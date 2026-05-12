@@ -23,6 +23,30 @@ DEFAULT_PERSONA = "mnemosyne"
 CHINESE_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 CHINESE_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
 PINYIN_PAREN_RE = re.compile(r"\([^()]*[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜüńňǹĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙǕǗǙǛÜ][^()]*\)")
+CHINESE_LESSON_INTENT_RE = re.compile(
+    r"\b("
+    r"teach|learn|lesson|vocab|vocabulary|phrase|phrases|greeting|greetings|"
+    r"beginner|chinese|mandarin|taiwanese mandarin|say|translate"
+    r")\b",
+    re.IGNORECASE,
+)
+SIMPLIFIED_TO_TRADITIONAL = str.maketrans(
+    {
+        "汉": "漢",
+        "语": "語",
+        "学": "學",
+        "习": "習",
+        "请": "請",
+        "谢": "謝",
+        "对": "對",
+        "吗": "嗎",
+        "这": "這",
+        "个": "個",
+        "什": "什",
+        "么": "麼",
+        "见": "見",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +69,49 @@ class ChineseTeachingEntry:
     phrase: str
     glosses: list[str]
     meaning: str
+
+
+COMMON_CHINESE_LESSON_ENTRIES: dict[str, ChineseTeachingEntry] = {
+    "你好": ChineseTeachingEntry(
+        phrase="你好",
+        glosses=["你 You", "好 Good"],
+        meaning='"Hello." Used as a basic greeting.',
+    ),
+    "謝謝": ChineseTeachingEntry(
+        phrase="謝謝",
+        glosses=["謝 Thank"],
+        meaning='"Thank you." Used to express thanks.',
+    ),
+    "請": ChineseTeachingEntry(
+        phrase="請",
+        glosses=["請 Please"],
+        meaning='"Please." Used to make a request polite.',
+    ),
+    "再見": ChineseTeachingEntry(
+        phrase="再見",
+        glosses=["再 Again", "見 See"],
+        meaning='"Goodbye." Literally "see again."',
+    ),
+    "早安": ChineseTeachingEntry(
+        phrase="早安",
+        glosses=["早 Early", "安 Peace"],
+        meaning='"Good morning." Used as a morning greeting.',
+    ),
+}
+
+ENGLISH_TO_CHINESE_PHRASES: dict[str, list[str]] = {
+    "hello": ["你好"],
+    "hi": ["你好"],
+    "greeting": ["你好"],
+    "greetings": ["你好", "早安"],
+    "thank": ["謝謝"],
+    "thanks": ["謝謝"],
+    "thank you": ["謝謝"],
+    "please": ["請"],
+    "goodbye": ["再見"],
+    "bye": ["再見"],
+    "good morning": ["早安"],
+}
 
 
 PERSONAS: dict[str, Persona] = {
@@ -328,6 +395,12 @@ class LocalAgentSession:
         ]
 
     def run(self, user_text: str) -> str:
+        if self.persona_key == "language_tutor" and is_chinese_lesson_request(user_text):
+            answer = render_chinese_lesson_request(user_text)
+            self.messages.append({"role": "user", "content": user_text})
+            self.messages.append({"role": "assistant", "content": answer})
+            return answer
+
         answer, self.messages = run_agent_turn(
             user_text=user_text,
             tools=self.tools,
@@ -439,6 +512,82 @@ def assistant_text(message: dict[str, Any]) -> str:
 
 def text_contains_chinese(text: str) -> bool:
     return bool(CHINESE_CHAR_RE.search(text))
+
+
+def normalize_traditional_chinese(text: str) -> str:
+    return text.translate(SIMPLIFIED_TO_TRADITIONAL)
+
+
+def is_chinese_lesson_request(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    if text_contains_chinese(normalized):
+        return len("".join(CHINESE_RUN_RE.findall(normalized))) <= 8 or bool(
+            CHINESE_LESSON_INTENT_RE.search(normalized)
+        )
+    if "chinese" in normalized or "mandarin" in normalized:
+        return bool(CHINESE_LESSON_INTENT_RE.search(normalized))
+    if re.search(r"\b(how do i say|how to say|what is|translate)\b", normalized):
+        return any(text_contains_english_phrase(normalized, key) for key in ENGLISH_TO_CHINESE_PHRASES)
+    return any(
+        phrase in normalized
+        for phrase in (
+            "teach me chinese",
+            "teach me mandarin",
+            "beginner chinese",
+            "chinese lesson",
+            "mandarin lesson",
+        )
+    )
+
+
+def text_contains_english_phrase(text: str, phrase: str) -> bool:
+    return bool(re.search(rf"\b{re.escape(phrase)}\b", text))
+
+
+def requested_chinese_lesson_phrases(text: str, limit: int = 2) -> list[str]:
+    phrases: list[str] = []
+    normalized_text = normalize_traditional_chinese(text)
+    for phrase in candidate_chinese_phrases(normalized_text, limit=limit):
+        if phrase not in phrases:
+            phrases.append(phrase)
+
+    lowered = text.lower()
+    for english, mapped_phrases in ENGLISH_TO_CHINESE_PHRASES.items():
+        if text_contains_english_phrase(lowered, english):
+            for phrase in mapped_phrases:
+                if phrase not in phrases:
+                    phrases.append(phrase)
+                if len(phrases) >= limit:
+                    return phrases
+
+    if not phrases and ("greeting" in lowered or "hello" in lowered or "hi" in lowered):
+        phrases.append("你好")
+    if not phrases and ("chinese" in lowered or "mandarin" in lowered):
+        phrases.append("你好")
+    return phrases[:limit]
+
+
+def deterministic_chinese_lesson_entry(phrase: str) -> ChineseTeachingEntry:
+    traditional_phrase = normalize_traditional_chinese(phrase)
+    known = COMMON_CHINESE_LESSON_ENTRIES.get(traditional_phrase)
+    if known:
+        return known
+    glosses = [f"{char} Character" for char in traditional_phrase]
+    return ChineseTeachingEntry(
+        phrase=traditional_phrase,
+        glosses=glosses,
+        meaning="A Chinese phrase. Ask for a deeper explanation when you want nuance or examples.",
+    )
+
+
+def render_chinese_lesson_request(text: str) -> str:
+    phrases = requested_chinese_lesson_phrases(text)
+    if not phrases:
+        phrases = ["你好"]
+    entries = [deterministic_chinese_lesson_entry(phrase) for phrase in phrases]
+    return "\n\n".join(render_chinese_teaching_entry(entry) for entry in entries)
 
 
 def zhuyin_syllables(text: str) -> list[str]:

@@ -13,9 +13,12 @@ from agent import (
     TUTOR_MODES,
     annotate_chinese_with_zhuyin,
     build_system_prompt,
+    is_chinese_lesson_request,
     load_profile_seed,
     normalize_persona,
+    normalize_traditional_chinese,
     normalize_tutor_mode,
+    render_chinese_lesson_request,
     render_chinese_teaching_entry,
 )
 from discord_bot import parse_allowed_channel_ids
@@ -137,6 +140,46 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertIn("Meaning:", rendered)
         self.assertIn("- 你 (ㄋㄧ", rendered)
         self.assertIn("- 你好 (", rendered)
+
+    def test_chinese_lesson_intent_detection(self) -> None:
+        self.assertTrue(is_chinese_lesson_request("teach me Chinese"))
+        self.assertTrue(is_chinese_lesson_request("How do I say hello in Mandarin?"))
+        self.assertTrue(is_chinese_lesson_request("Chinese lesson for 你好 please"))
+        self.assertTrue(is_chinese_lesson_request("你好"))
+        self.assertFalse(is_chinese_lesson_request("What is the weather today?"))
+
+    def test_chinese_lesson_request_renders_structured_output(self) -> None:
+        rendered = render_chinese_lesson_request("How do I say hello in Chinese?")
+
+        self.assertIn("你好 (", rendered)
+        self.assertIn("(ní", rendered)
+        self.assertIn("Meaning:", rendered)
+        self.assertIn("- 你 (ㄋㄧ", rendered)
+        self.assertIn('"Hello."', rendered)
+
+    def test_chinese_lesson_request_normalizes_common_simplified_forms(self) -> None:
+        rendered = render_chinese_lesson_request("Chinese lesson for 谢谢")
+
+        self.assertIn("謝謝", rendered)
+        self.assertNotIn("谢谢", rendered)
+
+    def test_chinese_lesson_request_does_not_match_hi_inside_chinese(self) -> None:
+        rendered = render_chinese_lesson_request("How do I say thank you in Chinese?")
+
+        self.assertIn("謝謝", rendered)
+        self.assertNotIn("你好", rendered)
+
+    def test_language_tutor_bypasses_model_for_chinese_lesson_requests(self) -> None:
+        session = LocalAgentSession(self.make_store_path(), persona="language_tutor")
+
+        rendered = session.run("Teach me Chinese greetings")
+
+        self.assertIn("你好 (", rendered)
+        self.assertIn("Meaning:", rendered)
+        self.assertEqual(session.messages[-1]["role"], "assistant")
+
+    def test_traditional_chinese_normalization(self) -> None:
+        self.assertEqual(normalize_traditional_chinese("汉语 谢谢 再见"), "漢語 謝謝 再見")
 
     def test_parse_allowed_channel_ids(self) -> None:
         parsed = parse_allowed_channel_ids("123, 456, nope, 789")
